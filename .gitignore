@@ -1,0 +1,6 @@
+browser_profile/
+.env
+*.log
+__pycache__/
+debug/
+netreq.txt

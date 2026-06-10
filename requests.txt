@@ -1,0 +1,22 @@
+# ============================================================
+#  RINEX REQUEST LIST
+#  Edit this file to choose which stations / years / days to add to cart.
+#
+#  ONE LINE PER STATION+YEAR:
+#      STATION   YEAR   DAYS
+#
+#  DAYS (DOY = day-of-year, 1-365/366) can be:
+#    - a single day:        300
+#    - a range:              360-365
+#    - a mix (comma, no spaces): 360-365,367,370-372
+#
+#  Lines starting with # are ignored (comments / notes).
+#  Cross-year ranges are NOT allowed - use a separate line per year.
+#
+#  EXAMPLES:
+#  cnab 2025 360-365
+#  cnab 2026 1-10
+#  bako 2025 355-359,365
+# ============================================================
+
+cnab 2025 360-365
