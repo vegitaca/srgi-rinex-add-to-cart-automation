@@ -1,6 +1,7 @@
 """
 Automates adding RINEX data (station + DOY + year) to the SRGI BIG cart
-(https://srgi.big.go.id/rinex/v1/download-file-box).
+(https://srgi.big.go.id/rinex/v1/download-file-box) and submitting the
+download request for each station (purpose: Pendidikan, agreeing to T&C).
 
 Usage:
     python add_to_cart.py config.json
@@ -9,6 +10,9 @@ On first run, an Edge window opens. Log in manually (handles the CAPTCHA
 yourself), then press Enter in the terminal to continue. The session is
 saved in ./browser_profile so future runs skip the login step as long as
 the session is still valid.
+
+The Indonesia VPN/network must be active for the whole run, since the
+download-submission step requires it.
 """
 
 import json
@@ -28,6 +32,92 @@ def close_info_modal(page):
             page.wait_for_timeout(300)
     except Exception:
         pass
+
+
+def dismiss_unrelated_popups(page):
+    """Close any visible modal that isn't the download-purpose form (e.g. the
+    occasional 'thank you for filling the survey' popup), so it doesn't block
+    later clicks. Best-effort; ignores errors.
+    """
+    try:
+        modals = page.locator(".modal.show, .modal[style*='display: block'], .modal[style*='display:block']")
+        for i in range(modals.count()):
+            modal = modals.nth(i)
+            if not modal.is_visible():
+                continue
+            if modal.locator("#button-term-ok").count() > 0:
+                continue  # this is the download-purpose modal, leave it alone
+            close_btn = modal.locator(
+                "button:has-text('×'), button:has-text('Close'), button:has-text('Tutup'), "
+                "button:has-text('OK'), button:has-text('Lewati'), button:has-text('Nanti'), "
+                "button[aria-label='Close']"
+            )
+            if close_btn.count() > 0 and close_btn.first.is_visible():
+                close_btn.first.click()
+                page.wait_for_timeout(300)
+    except Exception:
+        pass
+
+
+def submit_cart_download(page, station):
+    """On the cart page, click Download, fill the purpose form (Pendidikan +
+    agree to T&C), click Continue, and wait for the request to be submitted
+    (cart becomes empty). Assumes Indonesia VPN/network is active throughout.
+    Returns True if the cart ended up empty, False otherwise.
+    """
+    print(f"\n  Going to cart to submit download request for '{station}'...")
+    page.goto(f"{BASE_URL}/rinex/v1/carts")
+    page.wait_for_load_state("domcontentloaded")
+    page.wait_for_timeout(1000)
+    dismiss_unrelated_popups(page)
+
+    if page.get_by_text("Tidak ada list item", exact=False).count() > 0:
+        print("  Cart is already empty, nothing to download.")
+        return True
+
+    download_btn = page.locator("button.btn-primary.btn-md:visible", has_text="Download")
+    if download_btn.count() == 0:
+        print("  (warning: Download button not found on cart page)")
+        return False
+    download_btn.first.click()
+    page.wait_for_timeout(500)
+    dismiss_unrelated_popups(page)
+
+    # Purpose-of-data-usage modal
+    try:
+        page.wait_for_selector("#button-term-ok", timeout=10000)
+    except Exception:
+        print("  (warning: download form modal didn't appear)")
+        return False
+
+    pendidikan = page.locator("input[name='purpose-group'][value='pendidikan']")
+    if pendidikan.count() > 0 and not pendidikan.first.is_checked():
+        pendidikan.first.check(force=True)
+
+    terms_checkbox = page.locator("#button-term-ok")
+    if not terms_checkbox.is_checked():
+        terms_checkbox.check(force=True)
+    page.wait_for_timeout(300)
+
+    continue_btn = page.locator(".modal-footer button", has_text="Continue")
+    continue_btn.first.click()
+    print("  Submitted download request, waiting for it to be processed (up to 2 minutes)...")
+
+    # Wait for the cart to clear (request accepted) or the request-ready link to appear.
+    for attempt in range(24):  # up to 2 minutes
+        dismiss_unrelated_popups(page)
+        if page.get_by_text("Tidak ada list item", exact=False).count() > 0:
+            print(f"  -> Cart cleared, request submitted for '{station}'.")
+            return True
+        link = page.locator("#Link a")
+        if link.count() > 0 and link.first.is_visible():
+            href = link.first.get_attribute("href")
+            print(f"  -> Download ready: {href}")
+            return True
+        page.wait_for_timeout(5000)
+
+    print("  (gave up waiting for the download request to finish processing)")
+    return False
 
 
 def ensure_logged_in(page):
@@ -144,26 +234,36 @@ def process_job(page, job):
     close_info_modal(page)
     page.wait_for_selector("h5", timeout=20000)
 
-    # Cells initially render red while a loading spinner is shown; the
-    # real availability colors only appear after the spinner disappears.
-    # This can take a while, so poll patiently (up to 5 minutes).
-    print("  Waiting for the loading spinner to disappear (up to 5 minutes)...")
+    # While the real availability is still being fetched, almost all cells
+    # show as a red/'unavailable' placeholder (sometimes with a couple of
+    # stray non-placeholder cells already resolved). The refresh button's
+    # icon spins permanently and isn't a useful loading signal. Instead, we
+    # treat the page as "still loading" while the fraction of cells that
+    # AREN'T 'unavailable'/'unknown' is tiny (<=2 cells or <5%), and only
+    # declare it loaded once that fraction grows AND two consecutive reads
+    # come back identical (the real colors have settled). Capped at 5 min.
+    print("  Waiting for DOY availability to finish loading (up to 5 minutes)...")
     loaded = False
-    for attempt in range(60):  # up to 5 minutes
-        has_spinner = page.evaluate(
-            """() => {
-                const spinners = document.querySelectorAll('.fa-spin');
-                return Array.from(spinners).some(el => el.offsetParent !== null);
-            }"""
-        )
-        if not has_spinner:
+    previous_map = None
+    for attempt in range(60):  # up to 5 minutes (60 * 5s)
+        current_map = get_doy_status_map(page, year)
+        still_loading = True
+        if current_map is not None:
+            total = len(current_map)
+            resolved = sum(
+                1 for status in current_map.values()
+                if status not in ("unavailable", "unknown")
+            )
+            still_loading = resolved <= 2 or (total > 0 and resolved / total < 0.05)
+        if current_map is not None and not still_loading and current_map == previous_map:
             loaded = True
             break
+        previous_map = current_map
         print(f"    ... still loading ({(attempt + 1) * 5}s)")
         page.wait_for_timeout(5000)
 
     if not loaded:
-        print("  (gave up waiting for spinner to disappear)")
+        print("  (gave up waiting for DOY status to settle)")
     else:
         print("  Loading finished, checking DOY availability...")
     page.wait_for_timeout(1000)
@@ -306,9 +406,11 @@ def main():
             doys = job["doys"]
             print(f"  - {job['station']}  {job['year']}  DOYs {doys[0]}-{doys[-1]} ({len(doys)} day(s))"
                   if doys else f"  - {job['station']}  {job['year']}  (no DOYs)")
-    print("\nThe site only handles one station's download at a time, so after each "
-          "station is added to cart the script will pause for you to complete the "
-          "purpose form and download before moving on to the next station.")
+    print("\nThe site only handles one station's download at a time. After each "
+          "station's data is added to cart, the script will automatically click "
+          "Download, select 'Pendidikan', agree to the T&C, and submit the "
+          "request before moving on to the next station.")
+    print("Make sure the Indonesia VPN/network is already active before starting.")
     input("\nPress Enter to start, or Ctrl+C to cancel...\n")
 
     with sync_playwright() as p:
@@ -342,14 +444,7 @@ def main():
 
             print(f"\n  -> All requested DOYs for station '{station}' have been "
                   f"added to the cart: {BASE_URL}/rinex/v1/carts")
-            if i < len(station_groups):
-                print("  Please complete the purpose form and download for this "
-                      "station now (so the cart only ever holds one station's "
-                      "data at a time), then come back here.")
-                input(f"  Press Enter once '{station}' is downloaded and its cart "
-                      f"is cleared, to continue to the next station...\n")
-            else:
-                print("  This was the last station.")
+            submit_cart_download(page, station)
 
         print("\nAll stations processed. You can review the cart at:")
         print(f"{BASE_URL}/rinex/v1/carts")

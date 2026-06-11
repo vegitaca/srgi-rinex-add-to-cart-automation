@@ -1,11 +1,15 @@
 # SRGI RINEX Cart Automation
 
-Automates the repetitive part of requesting RINEX data from
+Automates requesting RINEX data from
 https://srgi.big.go.id/rinex/v1/download-file-box: for each (station, year, DOY)
 you list, it opens that station's page, clicks the DOY if it's available
-(green), and submits it to "Keranjang". It stops there — the final
-"purpose" form, Indonesia/VPN requirement, and Download click are still
-manual steps, by design.
+(green), and submits it to "Keranjang". Once a station's days are all in the
+cart, it goes to the cart page, clicks "Download", fills in the purpose form
+("Pendidikan"), agrees to the Terms & Conditions, and submits the request —
+fully automated, end to end, station by station.
+
+**This requires the Indonesia network/VPN to be active for the entire run**,
+since the cart/download step is geo-restricted.
 
 ## Setup (one-time)
 
@@ -52,12 +56,14 @@ lists, you can save them as different `.txt` files and run e.g.
   "Lanjut Ke Keranjang" then "Kembali ke halaman unduh data" automatically.
 - The site only handles one station's download at a time, so jobs are
   grouped by station: the script processes all years for a station, adds
-  them to the cart, then **pauses**. At that point go to
-  `https://srgi.big.go.id/rinex/v1/carts` and manually do the "Download"
-  click, the purpose form ("pendidikan"), etc. (with VPN Indonesia if
-  needed) for that station, then return to the terminal and press Enter to
-  continue to the next station.
-- At the end it prints the cart URL again for the final station.
+  them to the cart, then automatically goes to
+  `https://srgi.big.go.id/rinex/v1/carts`, clicks "Download", selects
+  "Pendidikan" as the purpose, checks the Terms & Conditions box, clicks
+  "Continue", and waits (up to ~2 minutes) for the request to be submitted
+  before moving on to the next station.
+- It also dismisses unrelated popups that can appear on the cart page (e.g.
+  an occasional "thank you for filling the survey" dialog) so they don't
+  block the download flow.
 
 ## requests.txt format
 
