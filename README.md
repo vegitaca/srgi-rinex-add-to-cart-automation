@@ -9,11 +9,11 @@ manual steps, by design.
 
 ## Setup (one-time)
 
-1. Install Python 3.10+ and Google Chrome.
+1. Install Python 3.10+ and Microsoft Edge.
 2. In this folder:
    ```
    pip install -r requirements.txt
-   playwright install chrome
+   playwright install msedge
    ```
 3. Open `requests.txt` and edit it with your stations/years/days (see format
    below). This is the file you'll edit every time you want to request
@@ -32,7 +32,7 @@ lists, you can save them as different `.txt` files and run e.g.
 - The script first prints a summary of what it's about to request and
   pauses ("Press Enter to start..."). **Check this list carefully** before
   pressing Enter — this is your chance to catch typos.
-- A Chrome window opens. **The first time**, it will stop and ask you to log
+- An Edge window opens. **The first time**, it will stop and ask you to log
   in manually (email/password + the "I'm not a robot" CAPTCHA) — this can't
   be automated. After logging in, press Enter in the terminal.
 - Your session is saved in `browser_profile/` (gitignored), so on later runs
@@ -50,9 +50,14 @@ lists, you can save them as different `.txt` files and run e.g.
   one-day "range", e.g. `bako 17 - 17 (1 File)`.
 - After each station/year batch with at least one available DOY, it clicks
   "Lanjut Ke Keranjang" then "Kembali ke halaman unduh data" automatically.
-- At the end it prints the cart URL. From there: do the "Download" click,
-  the purpose form ("pendidikan"), etc. manually (with VPN Indonesia if
-  needed).
+- The site only handles one station's download at a time, so jobs are
+  grouped by station: the script processes all years for a station, adds
+  them to the cart, then **pauses**. At that point go to
+  `https://srgi.big.go.id/rinex/v1/carts` and manually do the "Download"
+  click, the purpose form ("pendidikan"), etc. (with VPN Indonesia if
+  needed) for that station, then return to the terminal and press Enter to
+  continue to the next station.
+- At the end it prints the cart URL again for the final station.
 
 ## requests.txt format
 

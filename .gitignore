@@ -4,3 +4,4 @@ browser_profile/
 __pycache__/
 debug/
 netreq.txt
+requests.txt

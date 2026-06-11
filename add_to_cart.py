@@ -5,7 +5,7 @@ Automates adding RINEX data (station + DOY + year) to the SRGI BIG cart
 Usage:
     python add_to_cart.py config.json
 
-On first run, a Chrome window opens. Log in manually (handles the CAPTCHA
+On first run, an Edge window opens. Log in manually (handles the CAPTCHA
 yourself), then press Enter in the terminal to continue. The session is
 saved in ./browser_profile so future runs skip the login step as long as
 the session is still valid.
@@ -278,21 +278,43 @@ def load_jobs(config_path):
     return load_jobs_from_txt(config_path)
 
 
+def group_jobs_by_station(jobs):
+    """Group jobs into ordered (station, [jobs]) groups, preserving the
+    order stations first appear in. Jobs for the same station (different
+    years) stay together in one group.
+    """
+    groups = []
+    index_by_station = {}
+    for job in jobs:
+        station = job["station"]
+        if station not in index_by_station:
+            index_by_station[station] = len(groups)
+            groups.append((station, []))
+        groups[index_by_station[station]][1].append(job)
+    return groups
+
+
 def main():
     config_path = sys.argv[1] if len(sys.argv) > 1 else "requests.txt"
     jobs = load_jobs(config_path)
+    station_groups = group_jobs_by_station(jobs)
 
-    print(f"Loaded {len(jobs)} request(s) from {config_path}:")
-    for job in jobs:
-        doys = job["doys"]
-        print(f"  - {job['station']}  {job['year']}  DOYs {doys[0]}-{doys[-1]} ({len(doys)} day(s))"
-              if doys else f"  - {job['station']}  {job['year']}  (no DOYs)")
+    print(f"Loaded {len(jobs)} request(s) from {config_path}, grouped into "
+          f"{len(station_groups)} station(s):")
+    for station, station_jobs in station_groups:
+        for job in station_jobs:
+            doys = job["doys"]
+            print(f"  - {job['station']}  {job['year']}  DOYs {doys[0]}-{doys[-1]} ({len(doys)} day(s))"
+                  if doys else f"  - {job['station']}  {job['year']}  (no DOYs)")
+    print("\nThe site only handles one station's download at a time, so after each "
+          "station is added to cart the script will pause for you to complete the "
+          "purpose form and download before moving on to the next station.")
     input("\nPress Enter to start, or Ctrl+C to cancel...\n")
 
     with sync_playwright() as p:
         context = p.chromium.launch_persistent_context(
             PROFILE_DIR,
-            channel="chrome",
+            channel="msedge",
             headless=False,
             viewport={"width": 1280, "height": 800},
         )
@@ -312,11 +334,24 @@ def main():
         ensure_logged_in(page)
         close_info_modal(page)
 
-        for job in jobs:
-            process_job(page, job)
-            time.sleep(1)
+        for i, (station, station_jobs) in enumerate(station_groups, start=1):
+            print(f"\n##### Station {i}/{len(station_groups)}: {station} #####")
+            for job in station_jobs:
+                process_job(page, job)
+                time.sleep(1)
 
-        print("\nAll jobs processed. You can review the cart at:")
+            print(f"\n  -> All requested DOYs for station '{station}' have been "
+                  f"added to the cart: {BASE_URL}/rinex/v1/carts")
+            if i < len(station_groups):
+                print("  Please complete the purpose form and download for this "
+                      "station now (so the cart only ever holds one station's "
+                      "data at a time), then come back here.")
+                input(f"  Press Enter once '{station}' is downloaded and its cart "
+                      f"is cleared, to continue to the next station...\n")
+            else:
+                print("  This was the last station.")
+
+        print("\nAll stations processed. You can review the cart at:")
         print(f"{BASE_URL}/rinex/v1/carts")
         input("\nPress Enter to close the browser...")
         context.close()
